@@ -1,0 +1,90 @@
+/* themes/theme-bold.css */
+/* High contrast vivid theme — each metric has its own colored accent block */
+
+.etsy-research-bar {
+    background-color: #1e1e2e;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 8px !important;
+    gap: 6px !important;
+}
+
+/* Each metric gets its own colored pill */
+.etsy-research-bar__metric {
+    border-right: none;
+    border-radius: 6px;
+    padding: 5px 10px !important;
+    min-width: auto;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 1px !important;
+}
+
+.etsy-research-bar__metric:nth-child(1) {
+    background-color: #3b5bdb;
+}
+
+/* blue — shop age */
+.etsy-research-bar__metric:nth-child(2) {
+    background-color: #2f9e44;
+}
+
+/* green — shop sales */
+.etsy-research-bar__metric:nth-child(3) {
+    background-color: #1098ad;
+}
+
+/* teal — listings */
+.etsy-research-bar__metric:nth-child(4) {
+    background-color: #e8590c;
+}
+
+/* orange — est. sales */
+.etsy-research-bar__metric:nth-child(5) {
+    background-color: #7048e8;
+}
+
+/* purple — confidence */
+.etsy-research-bar__metric:nth-child(6) {
+    background-color: #c2255c;
+}
+
+/* pink — listed */
+.etsy-research-bar__metric:nth-child(7) {
+    background-color: #c92a2a;
+}
+
+/* red — favorites */
+.etsy-research-bar__metric:nth-child(8) {
+    background-color: #5c7cfa;
+}
+
+/* indigo — reviews */
+
+.etsy-research-bar__icon {
+    font-size: 12px;
+    display: none;
+    /* icon merged into label in bold theme */
+}
+
+.etsy-research-bar__label {
+    color: rgba(255, 255, 255, 0.75);
+    font-weight: 500;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.etsy-research-bar__value {
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.etsy-research-bar--loading {
+    background-color: #1e1e2e;
+}
+
+.etsy-research-bar__loading-text {
+    color: #666;
+}

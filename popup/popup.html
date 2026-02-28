@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Etsy Research Tool</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+
+  <header class="popup-header">
+    <span class="popup-header__icon">🔍</span>
+    <h1 class="popup-header__title">Etsy Research Tool</h1>
+  </header>
+
+  <!-- ── Section 1: Theme ─────────────────────────────────── -->
+  <section class="popup-section">
+    <h2 class="popup-section__title">Theme</h2>
+
+    <div class="theme-options">
+
+      <label class="theme-option" for="theme-default">
+        <input type="radio" id="theme-default" name="theme" value="default" />
+        <span class="theme-swatch theme-swatch--default"></span>
+        <span class="theme-option__label">Default</span>
+      </label>
+
+      <label class="theme-option" for="theme-dark">
+        <input type="radio" id="theme-dark" name="theme" value="dark" />
+        <span class="theme-swatch theme-swatch--dark"></span>
+        <span class="theme-option__label">Dark</span>
+      </label>
+
+      <label class="theme-option" for="theme-minimal">
+        <input type="radio" id="theme-minimal" name="theme" value="minimal" />
+        <span class="theme-swatch theme-swatch--minimal"></span>
+        <span class="theme-option__label">Minimal</span>
+      </label>
+
+      <label class="theme-option" for="theme-bold">
+        <input type="radio" id="theme-bold" name="theme" value="bold" />
+        <span class="theme-swatch theme-swatch--bold"></span>
+        <span class="theme-option__label">Bold</span>
+      </label>
+
+    </div>
+  </section>
+
+  <hr class="popup-divider" />
+
+  <!-- ── Section 2: Visible Metrics ──────────────────────── -->
+  <section class="popup-section">
+    <h2 class="popup-section__title">Show in Bar</h2>
+
+    <ul class="metric-list">
+
+      <li class="metric-item">
+        <label class="metric-label" for="metric-shopAge">
+          <input type="checkbox" id="metric-shopAge" data-metric="shopAge" />
+          <span class="metric-label__icon">🛒</span>
+          <span class="metric-label__text">Shop Age</span>
+        </label>
+      </li>
+
+      <li class="metric-item">
+        <label class="metric-label" for="metric-shopSales">
+          <input type="checkbox" id="metric-shopSales" data-metric="shopSales" />
+          <span class="metric-label__icon">📊</span>
+          <span class="metric-label__text">Shop Sales</span>
+        </label>
+      </li>
+
+      <li class="metric-item">
+        <label class="metric-label" for="metric-totalListings">
+          <input type="checkbox" id="metric-totalListings" data-metric="totalListings" />
+          <span class="metric-label__icon">📦</span>
+          <span class="metric-label__text">Total Listings</span>
+        </label>
+      </li>
+
+      <li class="metric-item">
+        <label class="metric-label" for="metric-estListingSales">
+          <input type="checkbox" id="metric-estListingSales" data-metric="estListingSales" />
+          <span class="metric-label__icon">🔥</span>
+          <span class="metric-label__text">Est. Listing Sales</span>
+        </label>
+      </li>
+
+      <li class="metric-item">
+        <label class="metric-label" for="metric-confidenceScore">
+          <input type="checkbox" id="metric-confidenceScore" data-metric="confidenceScore" />
+          <span class="metric-label__icon">⭐</span>
+          <span class="metric-label__text">Confidence Score</span>
+        </label>
+      </li>
+
+      <li class="metric-item">
+        <label class="metric-label" for="metric-listingAge">
+          <input type="checkbox" id="metric-listingAge" data-metric="listingAge" />
+          <span class="metric-label__icon">📅</span>
+          <span class="metric-label__text">Listing Age</span>
+        </label>
+      </li>
+
+      <li class="metric-item">
+        <label class="metric-label" for="metric-listingReviews">
+          <input type="checkbox" id="metric-listingReviews" data-metric="listingReviews" />
+          <span class="metric-label__icon">💬</span>
+          <span class="metric-label__text">Listing Reviews</span>
+        </label>
+      </li>
+
+      <li class="metric-item">
+        <label class="metric-label" for="metric-listingFavorites">
+          <input type="checkbox" id="metric-listingFavorites" data-metric="listingFavorites" />
+          <span class="metric-label__icon">❤️</span>
+          <span class="metric-label__text">Listing Favorites</span>
+        </label>
+      </li>
+
+    </ul>
+  </section>
+
+  <div id="popup-status" class="popup-status" aria-live="polite"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

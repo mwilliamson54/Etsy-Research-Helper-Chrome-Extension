@@ -1,0 +1,53 @@
+/* themes/theme-minimal.css */
+/* Single thin-line minimal theme — no box, just a top border separator */
+
+.etsy-research-bar {
+    background-color: transparent;
+    border: none;
+    border-top: 2px solid #ddd;
+    border-radius: 0;
+    padding: 4px 0 !important;
+    font-size: 11px !important;
+    gap: 0 !important;
+    flex-wrap: nowrap;
+}
+
+.etsy-research-bar__metric {
+    border-right: none;
+    padding: 2px 6px !important;
+    font-size: 11px;
+}
+
+/* Separate metrics with a centered dot */
+.etsy-research-bar__metric:not(:last-child)::after {
+    content: '·';
+    margin-left: 6px;
+    color: #bbb;
+}
+
+.etsy-research-bar__icon {
+    font-size: 11px;
+    margin-right: 2px !important;
+}
+
+.etsy-research-bar__label {
+    color: #aaa;
+    font-weight: 400;
+    font-size: 11px;
+}
+
+.etsy-research-bar__value {
+    color: #444;
+    font-weight: 500;
+    font-size: 11px;
+}
+
+.etsy-research-bar--loading {
+    border-top: 2px solid #eee;
+    background-color: transparent;
+}
+
+.etsy-research-bar__loading-text {
+    font-size: 11px;
+    color: #bbb;
+}

@@ -1,0 +1,193 @@
+/* popup/popup.css */
+/* Clean styles for the Etsy Research Tool popup.
+   Width: 280px. No external frameworks. System fonts. */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    width: 280px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    color: #222;
+    background: #fff;
+    padding-bottom: 8px;
+}
+
+/* ─── Header ─────────────────────────────────────────────── */
+
+.popup-header {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 12px 14px 10px;
+    background: linear-gradient(135deg, #f97316, #ea580c);
+    color: #fff;
+}
+
+.popup-header__icon {
+    font-size: 17px;
+    line-height: 1;
+}
+
+.popup-header__title {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #fff;
+}
+
+/* ─── Sections ───────────────────────────────────────────── */
+
+.popup-section {
+    padding: 10px 14px 6px;
+}
+
+.popup-section__title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #999;
+    margin-bottom: 8px;
+}
+
+.popup-divider {
+    border: none;
+    border-top: 1px solid #eee;
+    margin: 0 14px;
+}
+
+/* ─── Theme Options ──────────────────────────────────────── */
+
+.theme-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.theme-option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.theme-option input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.theme-swatch {
+    display: block;
+    width: 44px;
+    height: 28px;
+    border-radius: 5px;
+    border: 2px solid transparent;
+    transition: border-color 0.15s ease, transform 0.12s ease;
+}
+
+/* Swatch colors */
+.theme-swatch--default {
+    background: #f9f9f9;
+    border-color: #ddd;
+}
+
+.theme-swatch--dark {
+    background: #1a1a1a;
+    border-color: #444;
+}
+
+.theme-swatch--minimal {
+    background: linear-gradient(to bottom, #ddd 3px, #fff 3px);
+    border-color: #e0e0e0;
+}
+
+.theme-swatch--bold {
+    background: linear-gradient(135deg, #3b5bdb 50%, #e8590c 50%);
+    border-color: transparent;
+}
+
+/* Selected state */
+.theme-option input[type="radio"]:checked+.theme-swatch {
+    border-color: #f97316;
+    transform: scale(1.07);
+    box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.25);
+}
+
+.theme-option__label {
+    font-size: 10px;
+    color: #555;
+    font-weight: 500;
+}
+
+/* Hover state */
+.theme-option:hover .theme-swatch {
+    transform: scale(1.04);
+}
+
+/* ─── Metric Checkboxes ──────────────────────────────────── */
+
+.metric-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.metric-item {
+    border-radius: 5px;
+    transition: background-color 0.1s ease;
+}
+
+.metric-item:hover {
+    background-color: #f7f7f7;
+}
+
+.metric-label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 6px;
+    cursor: pointer;
+    user-select: none;
+    width: 100%;
+}
+
+.metric-label input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: #f97316;
+    flex-shrink: 0;
+}
+
+.metric-label__icon {
+    font-size: 13px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.metric-label__text {
+    font-size: 12px;
+    color: #333;
+}
+
+/* ─── Status Message ─────────────────────────────────────── */
+
+.popup-status {
+    font-size: 11px;
+    color: #999;
+    text-align: center;
+    min-height: 18px;
+    padding: 4px 14px 2px;
+    transition: opacity 0.3s ease;
+}

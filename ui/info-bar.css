@@ -1,0 +1,88 @@
+/* ui/info-bar.css */
+/* Base layout styles for the Etsy Research Bar.
+   All class names are prefixed with .etsy-research-bar to avoid conflicts with Etsy's CSS.
+   No global resets. No !important except where overriding theme specifics. */
+
+.etsy-research-bar {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 12px;
+    margin: 10px 0;
+    gap: 4px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
+    z-index: 100;
+    position: relative;
+
+    /* Subtle shadow to lift the bar slightly above page content */
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
+
+    /* Smooth transitions for theme changes */
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+/* ─── Metric Item ─────────────────────────────────────────────────────── */
+
+.etsy-research-bar__metric {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.etsy-research-bar__icon {
+    font-size: 13px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.etsy-research-bar__label {
+    font-size: 12px;
+    margin-right: 2px;
+}
+
+.etsy-research-bar__value {
+    font-size: 13px;
+}
+
+/* ─── Loading State ───────────────────────────────────────────────────── */
+
+.etsy-research-bar--loading {
+    justify-content: flex-start;
+    padding: 8px 14px;
+}
+
+.etsy-research-bar__loading-text {
+    font-size: 13px;
+    font-style: italic;
+    animation: etsy-research-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes etsy-research-pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
+}
+
+/* ─── Empty State ─────────────────────────────────────────────────────── */
+
+.etsy-research-bar__empty {
+    font-size: 12px;
+    font-style: italic;
+    opacity: 0.6;
+    padding: 2px 4px;
+}

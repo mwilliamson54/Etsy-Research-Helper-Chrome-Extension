@@ -1,0 +1,37 @@
+/* themes/theme-default.css */
+/* Clean neutral theme for the Etsy Research Bar */
+
+.etsy-research-bar {
+  background-color: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  color: #333;
+}
+
+.etsy-research-bar__metric {
+  border-right: 1px solid #e5e5e5;
+}
+
+.etsy-research-bar__metric:last-child {
+  border-right: none;
+}
+
+.etsy-research-bar__icon {
+  font-size: 13px;
+}
+
+.etsy-research-bar__label {
+  color: #888;
+  font-weight: 400;
+}
+
+.etsy-research-bar__value {
+  color: #222;
+  font-weight: 600;
+}
+
+.etsy-research-bar--loading {
+  background-color: #f9f9f9;
+  border-color: #ddd;
+  color: #999;
+}

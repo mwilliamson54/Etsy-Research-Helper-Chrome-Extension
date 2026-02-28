@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "Etsy Research Tool",
+  "version": "1.0.0",
+  "description": "Personal Etsy listing research bar with sales estimates",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://www.etsy.com/*",
+    "https://*.etsy.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.etsy.com/*",
+        "https://*.etsy.com/*"
+      ],
+      "js": [
+        "config/settings.js",
+        "utils/logger.js",
+        "utils/dom-helpers.js",
+        "utils/age-formatter.js",
+        "content/listing-scraper.js",
+        "content/shop-scraper.js",
+        "content/search-scraper.js",
+        "content/search-card-injector.js",
+        "content/ui-injector.js"
+      ],
+      "css": [],
+      "run_at": "document_end"
+    }
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Etsy Research Tool"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "themes/theme-default.css",
+        "themes/theme-dark.css",
+        "themes/theme-minimal.css",
+        "themes/theme-bold.css",
+        "ui/info-bar.css",
+        "ui/info-bar.html"
+      ],
+      "matches": [
+        "https://www.etsy.com/*"
+      ]
+    }
+  ]
+}

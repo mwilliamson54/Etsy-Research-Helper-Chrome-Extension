@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<!--
+  ui/info-bar.html
+  Template reference for the Etsy Research Bar.
+  NOTE: This file is for reference only — the bar is dynamically built in JavaScript
+  by content/ui-injector.js. It is listed as a web_accessible_resource in manifest.json.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Etsy Research Bar Template</title>
+</head>
+<body>
+
+<!--
+  Full bar example (all metrics visible):
+
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │ 🛒 Shop Age: 3.5 yrs │ 📊 Shop Sales: ~2,800 │ 📦 Listings: 64            │
+  │ 🔥 Est. Sales: 38–55  │ ⭐ Confidence: 71%     │ 📅 Listed: 4 months ago   │
+  │                        │                         │ ❤️ Favorites: 124        │
+  │                        │                         │ 💬 Reviews: 18           │
+  └──────────────────────────────────────────────────────────────────────────────┘
+-->
+
+<!-- Loading state -->
+<div class="etsy-research-bar etsy-research-bar--loading">
+  <div class="etsy-research-bar__loading-text">🔍 Analyzing listing...</div>
+</div>
+
+<!-- Fully populated bar (rendered dynamically by ui-injector.js) -->
+<div class="etsy-research-bar">
+
+  <div class="etsy-research-bar__metric">
+    <span class="etsy-research-bar__icon">🛒</span>
+    <span class="etsy-research-bar__label">Shop Age:</span>
+    <span class="etsy-research-bar__value">3.5 yrs</span>
+  </div>
+
+  <div class="etsy-research-bar__metric">
+    <span class="etsy-research-bar__icon">📊</span>
+    <span class="etsy-research-bar__label">Shop Sales:</span>
+    <span class="etsy-research-bar__value">~2,800</span>
+  </div>
+
+  <div class="etsy-research-bar__metric">
+    <span class="etsy-research-bar__icon">📦</span>
+    <span class="etsy-research-bar__label">Listings:</span>
+    <span class="etsy-research-bar__value">64</span>
+  </div>
+
+  <div class="etsy-research-bar__metric">
+    <span class="etsy-research-bar__icon">🔥</span>
+    <span class="etsy-research-bar__label">Est. Sales:</span>
+    <span class="etsy-research-bar__value">est. 38–55</span>
+  </div>
+
+  <div class="etsy-research-bar__metric">
+    <span class="etsy-research-bar__icon">⭐</span>
+    <span class="etsy-research-bar__label">Confidence:</span>
+    <span class="etsy-research-bar__value">71%</span>
+  </div>
+
+  <div class="etsy-research-bar__metric">
+    <span class="etsy-research-bar__icon">📅</span>
+    <span class="etsy-research-bar__label">Listed:</span>
+    <span class="etsy-research-bar__value">4 months ago</span>
+  </div>
+
+  <div class="etsy-research-bar__metric">
+    <span class="etsy-research-bar__icon">❤️</span>
+    <span class="etsy-research-bar__label">Favorites:</span>
+    <span class="etsy-research-bar__value">124</span>
+  </div>
+
+  <div class="etsy-research-bar__metric">
+    <span class="etsy-research-bar__icon">💬</span>
+    <span class="etsy-research-bar__label">Reviews:</span>
+    <span class="etsy-research-bar__value">18</span>
+  </div>
+
+</div>
+
+</body>
+</html>
