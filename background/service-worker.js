@@ -1,9 +1,6 @@
 // background/service-worker.js
-// The coordination brain for the Etsy Research Extension.
 // Handles messaging between content scripts, manages shop tab lifecycle, and saves data.
 
-// ─── Script Imports ───────────────────────────────────────────────────────
-// In MV3 service workers, we use importScripts for synchronous loading of shared code.
 importScripts(
     '../config/settings.js',
     '../utils/age-formatter.js',
@@ -14,19 +11,19 @@ importScripts(
 );
 
 // ─── State ────────────────────────────────────────────────────────────────
-// Map of listingTabId → pending resolve function for SHOP_DATA_READY
+
+// Map of shopTabId → resolve function, for SHOP_DATA_READY responses
 const pendingShopScrapes = new Map();
 
-// Map of listingTabId → shop background tabId (to avoid duplicates)
+// Map of listingTabId → shop background tabId (listing page pipeline)
 const activeShopTabs = new Map();
+
+// Map of shopUrl → true, to prevent opening duplicate background tabs
+// when multiple SERP cards from the same shop request data simultaneously
+const activeSerpScrapes = new Map();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-/**
- * Wait for a tab to finish loading.
- * @param {number} tabId
- * @returns {Promise<void>}
- */
 function waitForTabLoad(tabId) {
     return new Promise((resolve) => {
         const listener = (updatedTabId, changeInfo) => {
@@ -36,8 +33,6 @@ function waitForTabLoad(tabId) {
             }
         };
         chrome.tabs.onUpdated.addListener(listener);
-
-        // Also check immediately in case it's already complete
         chrome.tabs.get(tabId, (tab) => {
             if (tab && tab.status === 'complete') {
                 chrome.tabs.onUpdated.removeListener(listener);
@@ -47,175 +42,278 @@ function waitForTabLoad(tabId) {
     });
 }
 
-/**
- * Sleep for a given number of milliseconds.
- * @param {number} ms
- */
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ─── LISTING_DATA_READY Handler ───────────────────────────────────────────
+// ─── Shared shop scraping core ────────────────────────────────────────────
+// Used by both the listing-page pipeline and the SERP pipeline.
+// Returns shopData object or null on failure.
+
+async function scrapeShopByUrl(shopUrl) {
+    // Check cache first
+    let shopData = null;
+    try { shopData = await getCache(shopUrl); } catch(e) {}
+    if (shopData) {
+        console.log('[EtsyResearch] service-worker: cache hit for', shopUrl);
+        return shopData;
+    }
+
+    // Open background tab
+    const shopTab = await new Promise((resolve) => {
+        chrome.tabs.create({ url: shopUrl, active: false }, (tab) => resolve(tab));
+    });
+
+    await waitForTabLoad(shopTab.id);
+
+    const delay = (typeof CONFIG !== 'undefined') ? CONFIG.SHOP_SCRAPE_DELAY_MS : 1500;
+    await sleep(delay);
+
+    // Inject shop scraper
+    await chrome.scripting.executeScript({
+        target: { tabId: shopTab.id },
+        files: ['content/shop-scraper.js'],
+    });
+
+    // Wait for SHOP_DATA_READY
+    shopData = await new Promise((resolve) => {
+        pendingShopScrapes.set(shopTab.id, resolve);
+        chrome.tabs.sendMessage(shopTab.id, { type: 'SCRAPE_SHOP', tabId: shopTab.id });
+        setTimeout(() => {
+            if (pendingShopScrapes.has(shopTab.id)) {
+                pendingShopScrapes.delete(shopTab.id);
+                console.warn('[EtsyResearch] service-worker: shop scrape timeout for', shopUrl);
+                resolve(null);
+            }
+        }, 30000);
+    });
+
+    // Close background tab
+    try { await chrome.tabs.remove(shopTab.id); } catch(e) {}
+
+    // Cache result
+    if (shopData) {
+        try { await setCache(shopUrl, shopData); } catch(e) {}
+    }
+
+    return shopData;
+}
+
+// ─── LISTING PAGE pipeline (existing) ────────────────────────────────────
 
 async function handleListingDataReady(listingData, listingTabId) {
-    console.log('[EtsyResearch] service-worker: LISTING_DATA_READY from tab', listingTabId, listingData);
+    console.log('[EtsyResearch] service-worker: LISTING_DATA_READY from tab', listingTabId);
 
     if (!listingData.shop_url) {
         console.warn('[EtsyResearch] service-worker: No shop_url, cannot scrape shop.');
         return;
     }
 
-    // Prevent duplicate shop tab for the same listing tab
     if (activeShopTabs.has(listingTabId)) {
         console.log('[EtsyResearch] service-worker: Already scraping shop for tab', listingTabId);
         return;
     }
 
-    let shopData = null;
+    activeShopTabs.set(listingTabId, true);
 
-    // ── Cache check ──
-    try {
-        shopData = await getCache(listingData.shop_url);
-    } catch (e) {
-        console.warn('[EtsyResearch] service-worker: Cache read failed', e);
-    }
+    const shopData = await scrapeShopByUrl(listingData.shop_url).catch(e => {
+        console.error('[EtsyResearch] service-worker: scrapeShopByUrl failed', e);
+        return null;
+    });
 
-    if (!shopData) {
-        // ── Open background tab ──
-        const shopTab = await new Promise((resolve) => {
-            chrome.tabs.create(
-                { url: listingData.shop_url, active: false },
-                (tab) => resolve(tab)
-            );
-        });
-
-        activeShopTabs.set(listingTabId, shopTab.id);
-
-        // Wait for the tab to fully load
-        await waitForTabLoad(shopTab.id);
-
-        // Human-like delay
-        const delay = (typeof CONFIG !== 'undefined') ? CONFIG.SHOP_SCRAPE_DELAY_MS : 1500;
-        await sleep(delay);
-
-        // Inject shop-scraper.js into the background tab
-        await chrome.scripting.executeScript({
-            target: { tabId: shopTab.id },
-            files: ['content/shop-scraper.js'],
-        });
-
-        // Send SCRAPE_SHOP message to the background tab
-        // Include the listingTabId so we can correlate the response
-        shopData = await new Promise((resolve) => {
-            pendingShopScrapes.set(shopTab.id, resolve);
-
-            chrome.tabs.sendMessage(shopTab.id, {
-                type: 'SCRAPE_SHOP',
-                tabId: shopTab.id,
-            });
-
-            // Timeout after 30 seconds
-            setTimeout(() => {
-                if (pendingShopScrapes.has(shopTab.id)) {
-                    pendingShopScrapes.delete(shopTab.id);
-                    console.warn('[EtsyResearch] service-worker: SHOP_DATA_READY timeout for tab', shopTab.id);
-                    resolve(null);
-                }
-            }, 30000);
-        });
-
-        // Close the background shop tab
-        try {
-            await chrome.tabs.remove(shopTab.id);
-        } catch (e) {
-            console.warn('[EtsyResearch] service-worker: Could not close shop tab', e);
-        }
-        activeShopTabs.delete(listingTabId);
-
-        // Cache the fresh shop data
-        if (shopData) {
-            try {
-                await setCache(listingData.shop_url, shopData);
-            } catch (e) {
-                console.warn('[EtsyResearch] service-worker: Cache write failed', e);
-            }
-        }
-    }
+    activeShopTabs.delete(listingTabId);
 
     if (!shopData) {
-        console.error('[EtsyResearch] service-worker: Shop data unavailable, cannot estimate.');
+        console.error('[EtsyResearch] service-worker: Shop data unavailable.');
         return;
     }
 
-    // ── Run estimation ──
     const estimation = estimateListing(listingData, shopData);
 
-    // Build the combined result to send to the listing tab's UI injector
     const combined = {
-        // Listing fields
-        listing_id: listingData.listing_id,
-        listing_favorites: listingData.listing_favorites,
-        listing_reviews: listingData.listing_reviews,
-        listing_publish_date: listingData.listing_publish_date,
-        is_bestseller: listingData.is_bestseller,
-        is_popular_now: listingData.is_popular_now,
-        category: listingData.category,
-        subcategory: listingData.subcategory,
-        listing_price: listingData.listing_price,
-        listing_currency: listingData.listing_currency,
-        shop_name: listingData.shop_name,
-        shop_url: listingData.shop_url,
-        // Shop fields
-        total_shop_sales: shopData.total_shop_sales,
-        total_shop_listings: shopData.total_shop_listings,
-        total_shop_reviews: shopData.total_shop_reviews,
-        shop_created_year: shopData.shop_created_year,
-        // Estimation fields
+        listing_id:              listingData.listing_id,
+        listing_favorites:       listingData.listing_favorites,
+        listing_reviews:         listingData.listing_reviews,
+        listing_publish_date:    listingData.listing_publish_date,
+        is_bestseller:           listingData.is_bestseller,
+        is_popular_now:          listingData.is_popular_now,
+        category:                listingData.category,
+        subcategory:             listingData.subcategory,
+        listing_price:           listingData.listing_price,
+        listing_currency:        listingData.listing_currency,
+        shop_name:               listingData.shop_name,
+        shop_url:                listingData.shop_url,
+        total_shop_sales:        shopData.total_shop_sales,
+        total_shop_listings:     shopData.total_shop_listings,
+        total_shop_reviews:      shopData.total_shop_reviews,
+        shop_created_year:       shopData.shop_created_year,
         ...estimation,
     };
 
-    // ── Send RENDER_BAR to listing tab ──
     try {
         await chrome.tabs.sendMessage(listingTabId, { type: 'RENDER_BAR', data: combined });
-    } catch (e) {
-        console.warn('[EtsyResearch] service-worker: Could not send RENDER_BAR to tab', listingTabId, e);
+    } catch(e) {
+        console.warn('[EtsyResearch] service-worker: Could not send RENDER_BAR', e);
     }
 
-    // ── Save to Supabase ──
+    // Save to Supabase
     const supabaseRow = {
-        listing_id: combined.listing_id,
-        shop_name: combined.shop_name,
-        shop_url: combined.shop_url,
-        shop_age_display: combined.shop_age_display,
-        shop_created_year: combined.shop_created_year,
-        total_shop_sales: combined.total_shop_sales,
-        total_shop_listings: combined.total_shop_listings,
-        total_shop_reviews: combined.total_shop_reviews,
+        listing_id:             combined.listing_id,
+        shop_name:              combined.shop_name,
+        shop_url:               combined.shop_url,
+        shop_age_display:       combined.shop_age_display,
+        shop_created_year:      combined.shop_created_year,
+        total_shop_sales:       combined.total_shop_sales,
+        total_shop_listings:    combined.total_shop_listings,
+        total_shop_reviews:     combined.total_shop_reviews,
         estimated_listing_sales: combined.estimated_listing_sales,
-        estimated_sales_low: combined.estimated_sales_low,
-        estimated_sales_high: combined.estimated_sales_high,
-        listing_favorites: combined.listing_favorites,
-        listing_reviews: combined.listing_reviews,
-        listing_price: combined.listing_price,
-        listing_currency: combined.listing_currency,
-        listing_age_days: combined.listing_age_days,
-        listing_age_display: combined.listing_age_display,
-        listing_publish_date: combined.listing_publish_date,
-        category: combined.category,
-        subcategory: combined.subcategory,
-        is_bestseller: combined.is_bestseller,
-        is_popular_now: combined.is_popular_now,
-        confidence_score: combined.confidence_score,
-        confidence_reason: combined.confidence_reason,
-        sample_listings_used: combined.sample_listings_used,
+        estimated_sales_low:    combined.estimated_sales_low,
+        estimated_sales_high:   combined.estimated_sales_high,
+        listing_favorites:      combined.listing_favorites,
+        listing_reviews:        combined.listing_reviews,
+        listing_price:          combined.listing_price,
+        listing_currency:       combined.listing_currency,
+        listing_age_days:       combined.listing_age_days,
+        listing_age_display:    combined.listing_age_display,
+        listing_publish_date:   combined.listing_publish_date,
+        category:               combined.category,
+        subcategory:            combined.subcategory,
+        is_bestseller:          combined.is_bestseller,
+        is_popular_now:         combined.is_popular_now,
+        confidence_score:       combined.confidence_score,
+        confidence_reason:      combined.confidence_reason,
+        sample_listings_used:   combined.sample_listings_used,
     };
-
     saveListing(supabaseRow).catch(e => {
         console.error('[EtsyResearch] service-worker: saveListing failed', e);
     });
 }
 
-// ─── SHOP_DATA_READY Handler ──────────────────────────────────────────────
+// ─── SERP pipeline (new) ──────────────────────────────────────────────────
+// Handles SERP_LISTING_REQUEST: scrapes shop for a SERP card and sends
+// SERP_SHOP_DATA back to the originating tab.
+
+async function handleSerpListingRequest(msg, senderTabId) {
+    const { listing_id, shop_url, listing_data } = msg;
+
+    if (!shop_url || !listing_id) {
+        console.warn('[EtsyResearch] service-worker: SERP request missing shop_url or listing_id');
+        return;
+    }
+
+    // Prevent duplicate concurrent scrapes for the same shop URL
+    if (activeSerpScrapes.has(shop_url)) {
+        console.log('[EtsyResearch] service-worker: SERP scrape already in progress for', shop_url);
+        // Wait for the existing scrape to finish then serve from cache
+        // Simple approach: poll cache every 2s for up to 40s
+        let waited = 0;
+        while (activeSerpScrapes.has(shop_url) && waited < 40000) {
+            await sleep(2000);
+            waited += 2000;
+        }
+        // Try to serve from cache now
+        let cached = null;
+        try { cached = await getCache(shop_url); } catch(e) {}
+        if (cached) {
+            await sendSerpResponse(senderTabId, listing_id, listing_data, cached);
+        }
+        return;
+    }
+
+    activeSerpScrapes.set(shop_url, true);
+
+    try {
+        const shopData = await scrapeShopByUrl(shop_url);
+        await sendSerpResponse(senderTabId, listing_id, listing_data, shopData);
+    } catch(e) {
+        console.error('[EtsyResearch] service-worker: SERP shop scrape failed for', shop_url, e);
+        // Send null so the content script hides the placeholders
+        try {
+            await chrome.tabs.sendMessage(senderTabId, {
+                type:       'SERP_SHOP_DATA',
+                listing_id: listing_id,
+                data:       null,
+            });
+        } catch(e2) {}
+    } finally {
+        activeSerpScrapes.delete(shop_url);
+    }
+}
+
+async function sendSerpResponse(senderTabId, listing_id, listing_data, shopData) {
+    if (!shopData) {
+        try {
+            await chrome.tabs.sendMessage(senderTabId, {
+                type:       'SERP_SHOP_DATA',
+                listing_id: listing_id,
+                data:       null,
+            });
+        } catch(e) {}
+        return;
+    }
+
+    // Run the estimator using whatever listing data we have from the SERP card
+    let estimation = {};
+    try {
+        estimation = estimateListing(listing_data || {}, shopData);
+    } catch(e) {
+        console.warn('[EtsyResearch] service-worker: estimateListing failed for SERP card', e);
+    }
+
+    const responseData = {
+        // Shop fields
+        shop_age_display:        estimation.shop_age_display || null,
+        total_shop_sales:        shopData.total_shop_sales,
+        total_shop_listings:     shopData.total_shop_listings,
+        total_shop_reviews:      shopData.total_shop_reviews,
+        shop_created_year:       shopData.shop_created_year,
+        // Estimation fields
+        estimated_listing_sales: estimation.estimated_listing_sales,
+        estimated_sales_low:     estimation.estimated_sales_low,
+        estimated_sales_high:    estimation.estimated_sales_high,
+        confidence_score:        estimation.confidence_score,
+        confidence_reason:       estimation.confidence_reason,
+    };
+
+    try {
+        await chrome.tabs.sendMessage(senderTabId, {
+            type:       'SERP_SHOP_DATA',
+            listing_id: listing_id,
+            data:       responseData,
+        });
+        console.log('[EtsyResearch] service-worker: SERP_SHOP_DATA sent for listing', listing_id);
+    } catch(e) {
+        console.warn('[EtsyResearch] service-worker: Could not send SERP_SHOP_DATA to tab', senderTabId, e);
+    }
+
+    // Optionally save to Supabase
+    if (listing_data) {
+        const supabaseRow = {
+            listing_id:              listing_id,
+            shop_url:                listing_data.shop_url,
+            total_shop_sales:        shopData.total_shop_sales,
+            total_shop_listings:     shopData.total_shop_listings,
+            shop_created_year:       shopData.shop_created_year,
+            estimated_listing_sales: estimation.estimated_listing_sales,
+            estimated_sales_low:     estimation.estimated_sales_low,
+            estimated_sales_high:    estimation.estimated_sales_high,
+            listing_favorites:       listing_data.listing_favorites,
+            listing_reviews:         listing_data.listing_reviews,
+            listing_price:           listing_data.listing_price,
+            listing_currency:        listing_data.listing_currency,
+            is_bestseller:           listing_data.is_bestseller,
+            is_popular_now:          listing_data.is_popular_now,
+            confidence_score:        estimation.confidence_score,
+            confidence_reason:       estimation.confidence_reason,
+            sample_listings_used:    estimation.sample_listings_used,
+        };
+        saveListing(supabaseRow).catch(e => {
+            console.error('[EtsyResearch] service-worker: saveListing (SERP) failed', e);
+        });
+    }
+}
+
+// ─── SHOP_DATA_READY handler ──────────────────────────────────────────────
 
 function handleShopDataReady(msg) {
     const shopTabId = msg.tabId || msg.data?.tabId;
@@ -226,7 +324,7 @@ function handleShopDataReady(msg) {
     }
 }
 
-// ─── SEARCH_SESSION_DATA Handler ──────────────────────────────────────────
+// ─── SEARCH_SESSION_DATA handler ─────────────────────────────────────────
 
 function handleSearchSessionData(sessionData) {
     console.log('[EtsyResearch] service-worker: SEARCH_SESSION_DATA received', sessionData);
@@ -241,9 +339,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const senderTabId = sender.tab ? sender.tab.id : null;
 
     if (msg.type === 'LISTING_DATA_READY') {
-        if (senderTabId) {
-            handleListingDataReady(msg.data, senderTabId);
-        }
+        if (senderTabId) handleListingDataReady(msg.data, senderTabId);
+        return false;
+    }
+
+    if (msg.type === 'SERP_LISTING_REQUEST') {
+        if (senderTabId) handleSerpListingRequest(msg, senderTabId);
         return false;
     }
 

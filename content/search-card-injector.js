@@ -1,618 +1,560 @@
 // content/search-card-injector.js
-// Injects a compact research mini-bar below each listing card on Etsy search pages.
-// The bar appears IMMEDIATELY with shimmer/skeleton placeholders, then values
-// fade in progressively as each metric is extracted from the card DOM.
+// FULLY SELF-CONTAINED.
+// For the first 8 cards: extracts shop URL, requests shop data from service worker,
+// and fills extra metrics (shop age, shop sales, est. sales, confidence) into the bar.
 
 (function () {
     'use strict';
 
-    // Only run on search/browse pages (not on individual listing pages)
-    // Supports regional paths like /uk/listing/, /de/listing/, etc.
-    const href = window.location.href;
-    if (/etsy\.com\/(?:[a-z]{2}\/)?listing\//.test(href)) return;
+    // Exit on individual listing pages
+    if (/etsy\.com\/(?:[a-z]{2}\/)?listing\//.test(window.location.href)) return;
 
-    const BAR_CLASS = 'etsy-research-mini-bar';
-    const BAR_ATTR = 'data-erbar-injected';
-    const SHIMMER_CLASS = 'ermb-shimmer';
-    const LOADED_CLASS = 'ermb-loaded';
+    var BAR_CLASS   = 'etsy-research-mini-bar';
+    var BAR_ATTR    = 'data-erbar-injected';
+    var SHIMMER_CLS = 'ermb-shimmer';
+    var LOADED_CLS  = 'ermb-loaded';
 
-    // ─── Style Injection ─────────────────────────────────────────────────────
+    // How many cards to deep-scrape via service worker
+    var MAX_DEEP_SCRAPE = 8;
 
-    function injectMiniBarStyles() {
-        const styleId = 'etsy-research-mini-bar-style';
-        if (document.getElementById(styleId)) return;
+    // Map of listing_id → bar element, so we can update the bar when shop data arrives
+    var barsByListingId = {};
 
-        const style = document.createElement('style');
-        style.id = styleId;
-        style.textContent = `
-            /* ── Shimmer keyframes ── */
-            @keyframes ermb-shimmer-sweep {
-                0%   { background-position: -200% 0; }
-                100% { background-position: 200% 0; }
-            }
-            @keyframes ermb-fade-in {
-                from { opacity: 0; transform: translateY(2px); }
-                to   { opacity: 1; transform: translateY(0); }
-            }
+    // ── Inject CSS ────────────────────────────────────────────────────────────
+    function injectStyles() {
+        if (document.getElementById('etsy-research-mini-bar-style')) return;
+        var s = document.createElement('style');
+        s.id = 'etsy-research-mini-bar-style';
+        s.textContent = [
+            '@keyframes ermb-shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}',
+            '@keyframes ermb-fadein{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}',
 
-            /* ── Mini-bar container ── */
-            .${BAR_CLASS} {
-                display: flex !important;
-                flex-wrap: wrap !important;
-                align-items: center !important;
-                gap: 4px 6px !important;
-                width: 100% !important;
-                box-sizing: border-box !important;
-                padding: 5px 8px !important;
-                margin-top: 4px !important;
-                background: #f8f8f8 !important;
-                border: 1px solid #e0e0e0 !important;
-                border-radius: 6px !important;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
-                font-size: 11px !important;
-                color: #444 !important;
-                line-height: 1.3 !important;
-                min-height: 26px !important;
-                overflow: hidden !important;
-            }
+            '.' + BAR_CLASS + '{',
+            '  display:flex!important;flex-wrap:wrap!important;align-items:center!important;',
+            '  gap:4px 6px!important;width:100%!important;box-sizing:border-box!important;',
+            '  padding:5px 8px!important;margin-top:6px!important;margin-bottom:2px!important;',
+            '  background:#f8f8f8!important;border:1px solid #e0e0e0!important;',
+            '  border-radius:6px!important;',
+            '  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif!important;',
+            '  font-size:11px!important;color:#444!important;line-height:1.3!important;',
+            '  min-height:26px!important;position:relative!important;z-index:10!important;',
+            '}',
 
-            /* ── Chip (value container) ── */
-            .${BAR_CLASS} .ermb-chip {
-                display: inline-flex !important;
-                align-items: center !important;
-                gap: 3px !important;
-                background: #fff !important;
-                border: 1px solid #e5e5e5 !important;
-                border-radius: 4px !important;
-                padding: 2px 6px !important;
-                white-space: nowrap !important;
-                font-size: 11px !important;
-                color: #555 !important;
-                min-width: 40px !important;
-                min-height: 18px !important;
-                position: relative !important;
-                overflow: hidden !important;
-            }
-            .${BAR_CLASS} .ermb-chip .ermb-label {
-                color: #999 !important;
-                font-size: 10px !important;
-            }
-            .${BAR_CLASS} .ermb-chip .ermb-value {
-                font-weight: 600 !important;
-                color: #222 !important;
-                font-size: 11px !important;
-            }
+            '.' + BAR_CLASS + ' .ermb-chip{',
+            '  display:inline-flex!important;align-items:center!important;gap:3px!important;',
+            '  background:#fff!important;border:1px solid #e5e5e5!important;border-radius:4px!important;',
+            '  padding:2px 6px!important;white-space:nowrap!important;font-size:11px!important;',
+            '  color:#555!important;min-height:18px!important;',
+            '}',
+            '.' + BAR_CLASS + ' .ermb-label{color:#999!important;font-size:10px!important;}',
+            '.' + BAR_CLASS + ' .ermb-value{font-weight:600!important;color:#222!important;font-size:11px!important;}',
 
-            /* ── Shimmer placeholder (inside chip) ── */
-            .${BAR_CLASS} .${SHIMMER_CLASS} .ermb-value {
-                display: inline-block !important;
-                width: 36px !important;
-                height: 12px !important;
-                border-radius: 3px !important;
-                background: linear-gradient(90deg, #eee 25%, #ddd 50%, #eee 75%) !important;
-                background-size: 200% 100% !important;
-                animation: ermb-shimmer-sweep 1.4s ease-in-out infinite !important;
-                color: transparent !important;
-                user-select: none !important;
-            }
+            // Shimmer animation on value span
+            '.' + BAR_CLASS + ' .' + SHIMMER_CLS + ' .ermb-value{',
+            '  display:inline-block!important;width:36px!important;height:12px!important;',
+            '  border-radius:3px!important;',
+            '  background:linear-gradient(90deg,#eee 25%,#ddd 50%,#eee 75%)!important;',
+            '  background-size:200% 100%!important;',
+            '  animation:ermb-shimmer 1.4s ease-in-out infinite!important;',
+            '  color:transparent!important;',
+            '}',
 
-            /* ── Loaded state (fade in) ── */
-            .${BAR_CLASS} .${LOADED_CLASS} .ermb-value {
-                animation: ermb-fade-in 0.3s ease-out forwards !important;
-                width: auto !important;
-                height: auto !important;
-                background: none !important;
-                color: #222 !important;
-            }
+            '.' + BAR_CLASS + ' .' + LOADED_CLS + ' .ermb-value{',
+            '  animation:ermb-fadein 0.3s ease-out forwards!important;',
+            '  width:auto!important;height:auto!important;background:none!important;color:#222!important;',
+            '}',
 
-            /* ── Badge chips (bestseller / popular) ── */
-            .${BAR_CLASS} .ermb-badge {
-                display: inline-flex !important;
-                align-items: center !important;
-                gap: 2px !important;
-                border-radius: 4px !important;
-                padding: 2px 5px !important;
-                font-size: 10px !important;
-                font-weight: 600 !important;
-                white-space: nowrap !important;
-            }
-            .${BAR_CLASS} .ermb-badge.bestseller {
-                background: #fff3cd !important;
-                color: #856404 !important;
-                border: 1px solid #ffc107 !important;
-            }
-            .${BAR_CLASS} .ermb-badge.popular {
-                background: #fde9ee !important;
-                color: #c0123c !important;
-                border: 1px solid #fbd3dc !important;
-            }
-            .${BAR_CLASS} .ermb-badge.${SHIMMER_CLASS} {
-                width: 60px !important;
-                height: 16px !important;
-                background: linear-gradient(90deg, #eee 25%, #ddd 50%, #eee 75%) !important;
-                background-size: 200% 100% !important;
-                animation: ermb-shimmer-sweep 1.4s ease-in-out infinite !important;
-                border: 1px solid #e0e0e0 !important;
-                color: transparent !important;
-            }
-            .${BAR_CLASS} .ermb-badge.${LOADED_CLASS} {
-                animation: ermb-fade-in 0.3s ease-out forwards !important;
-            }
+            // Deep-scrape chips get a slightly different background to distinguish them
+            '.' + BAR_CLASS + ' .ermb-chip.ermb-deep{',
+            '  background:#f0f7ff!important;border-color:#c8e0f7!important;',
+            '}',
+            '.' + BAR_CLASS + ' .ermb-chip.ermb-deep .ermb-label{color:#6ba3cb!important;}',
+            '.' + BAR_CLASS + ' .ermb-chip.ermb-deep .ermb-value{color:#1a5a8a!important;}',
 
-            /* ── Listing ID label ── */
-            .${BAR_CLASS} .ermb-id {
-                margin-left: auto !important;
-                font-size: 9px !important;
-                color: #bbb !important;
-                white-space: nowrap !important;
-            }
-        `;
-        document.head.appendChild(style);
+            // Separator between card-data chips and shop-data chips
+            '.' + BAR_CLASS + ' .ermb-sep{',
+            '  display:inline-block!important;width:1px!important;height:16px!important;',
+            '  background:#ddd!important;margin:0 2px!important;flex-shrink:0!important;',
+            '}',
+
+            '.' + BAR_CLASS + ' .ermb-badge{',
+            '  display:inline-flex!important;align-items:center!important;gap:2px!important;',
+            '  border-radius:4px!important;padding:2px 5px!important;',
+            '  font-size:10px!important;font-weight:600!important;white-space:nowrap!important;',
+            '}',
+            '.' + BAR_CLASS + ' .ermb-badge.bestseller{background:#fff3cd!important;color:#856404!important;border:1px solid #ffc107!important;}',
+            '.' + BAR_CLASS + ' .ermb-badge.popular{background:#fde9ee!important;color:#c0123c!important;border:1px solid #fbd3dc!important;}',
+            '.' + BAR_CLASS + ' .ermb-badge.' + SHIMMER_CLS + '{',
+            '  width:60px!important;height:16px!important;',
+            '  background:linear-gradient(90deg,#eee 25%,#ddd 50%,#eee 75%)!important;',
+            '  background-size:200% 100%!important;',
+            '  animation:ermb-shimmer 1.4s ease-in-out infinite!important;',
+            '  border:1px solid #e0e0e0!important;color:transparent!important;',
+            '}',
+            '.' + BAR_CLASS + ' .ermb-badge.' + LOADED_CLS + '{animation:ermb-fadein 0.3s ease-out forwards!important;}',
+            '.' + BAR_CLASS + ' .ermb-id{margin-left:auto!important;font-size:9px!important;color:#bbb!important;}',
+
+            // Confidence score colour coding
+            '.' + BAR_CLASS + ' .ermb-conf-high{color:#2a7a2a!important;font-weight:700!important;}',
+            '.' + BAR_CLASS + ' .ermb-conf-med{color:#a06000!important;font-weight:700!important;}',
+            '.' + BAR_CLASS + ' .ermb-conf-low{color:#a00000!important;font-weight:700!important;}',
+
+            // Let the <li> grid item grow to fit the bar
+            'li.wt-grid__item-xs-6{height:auto!important;align-self:start!important;}',
+        ].join('\n');
+
+        if (document.head) {
+            document.head.appendChild(s);
+        } else {
+            document.addEventListener('DOMContentLoaded', function () {
+                document.head.appendChild(s);
+            });
+        }
     }
 
-    // ─── Data Extraction Helpers ─────────────────────────────────────────────
-
-    function parseNumber(text) {
+    // ── Utilities ─────────────────────────────────────────────────────────────
+    function parseNum(text) {
         if (!text) return null;
-        const cleaned = text.replace(/,/g, '').match(/\d+/);
-        return cleaned ? parseInt(cleaned[0], 10) : null;
+        var m = text.replace(/,/g, '').match(/\d+/);
+        return m ? parseInt(m[0], 10) : null;
     }
 
-    function formatNum(n) {
+    function fmtNum(n) {
         if (n == null) return null;
         if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-        if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+        if (n >= 1000)    return (n / 1000).toFixed(1) + 'k';
         return n.toLocaleString();
     }
 
-    // ─── Card Finder (broad, multi-strategy) ─────────────────────────────────
-
-    function findAllCards() {
-        const notInjected = ':not([' + BAR_ATTR + '])';
-
-        // Strategy 1: data-listing-id attribute (traditional & still common)
-        let cards = document.querySelectorAll('[data-listing-id]' + notInjected);
-        if (cards.length > 0) { console.log('[EtsyResearch] findAllCards: Strategy 1 (data-listing-id) matched', cards.length); return cards; }
-
-        // Strategy 2: data-palette-listing-id (some A/B test layouts)
-        cards = document.querySelectorAll('[data-palette-listing-id]' + notInjected);
-        if (cards.length > 0) { console.log('[EtsyResearch] findAllCards: Strategy 2 (data-palette-listing-id) matched', cards.length); return cards; }
-
-        // Strategy 3: listing card class names (various Etsy versions)
-        cards = document.querySelectorAll([
-            '.v2-listing-card' + notInjected,
-            '.listing-card' + notInjected,
-            '[data-listing-card-v2]' + notInjected,
-            '[data-listing-card]' + notInjected,
-            '.wt-grid__item-xs-6' + notInjected,
-        ].join(', '));
-        if (cards.length > 0) { console.log('[EtsyResearch] findAllCards: Strategy 3 (listing card classes) matched', cards.length); return cards; }
-
-        // Strategy 4: React/Next.js era — data-appears-component-name or data-search-results children
-        cards = document.querySelectorAll([
-            '[data-appears-component-name*="listing"]' + notInjected,
-            '[data-appears-component-name*="Listing"]' + notInjected,
-            '[data-search-results] > div' + notInjected,
-            '[data-search-results] > li' + notInjected,
-        ].join(', '));
-        if (cards.length > 0) { console.log('[EtsyResearch] findAllCards: Strategy 4 (React data attrs) matched', cards.length); return cards; }
-
-        // Strategy 5: search results grid — find <li> or <div> ancestors of listing links
-        const listingLinks = document.querySelectorAll('a[href*="/listing/"]:not([' + BAR_ATTR + '-link])');
-        if (listingLinks.length === 0) {
-            console.warn('[EtsyResearch] findAllCards: No listing links found on page at all!');
-            return new Set();
-        }
-
-        console.log('[EtsyResearch] findAllCards: Strategy 5 (link ancestry) — found', listingLinks.length, 'listing links');
-        const parentCards = new Set();
-        listingLinks.forEach(link => {
-            link.setAttribute(BAR_ATTR + '-link', '1');
-            // Walk up to find a reasonable card container
-            let el = link.closest('li')
-                || link.closest('[class*="listing"]')
-                || link.closest('[class*="card"]')
-                || link.closest('[class*="grid"] > *')
-                || link.parentElement?.parentElement  // two levels up from the <a>
-                || link.parentElement;
-            if (el && !el.hasAttribute(BAR_ATTR)) {
-                const match = link.href.match(/\/listing\/(\d+)/);
-                if (match) {
-                    el.setAttribute('data-listing-id', match[1]);
-                    parentCards.add(el);
-                }
-            }
-        });
-        return parentCards;
+    function getListingId(el) {
+        if (el.dataset && el.dataset.listingId)        return el.dataset.listingId;
+        if (el.dataset && el.dataset.paletteListingId) return el.dataset.paletteListingId;
+        var a = el.querySelector('a[href*="/listing/"]');
+        if (a) { var m = a.href.match(/\/listing\/(\d+)/); if (m) return m[1]; }
+        return null;
     }
 
-    // ─── Extract individual metrics from a card ──────────────────────────────
+    // Extract the shop URL from a card
+    // Etsy puts it in data-shop-url or in links containing /shop/
+    function getShopUrl(card) {
+        // data-shop-url attribute (on seller name span)
+        var el = card.querySelector('[data-shop-url]');
+        if (el) {
+            var u = el.getAttribute('data-shop-url');
+            if (u && u.indexOf('/shop/') !== -1) return normaliseShopUrl(u);
+        }
 
-    function getListingId(card) {
-        // Try data attributes first
-        if (card.dataset.listingId) return card.dataset.listingId;
-        if (card.dataset.paletteListingId) return card.dataset.paletteListingId;
-        // Fallback: extract from any listing link inside the card
-        const link = card.querySelector('a[href*="/listing/"]');
-        if (link) {
-            const match = link.href.match(/\/listing\/(\d+)/);
-            if (match) return match[1];
+        // Link with /shop/ in href
+        var links = card.querySelectorAll('a[href*="/shop/"]');
+        for (var i = 0; i < links.length; i++) {
+            var href = links[i].href || '';
+            // Skip Etsy generic shop nav links
+            if (/\/(yourEtsy|updates|favorites|sold|listings)/.test(href)) continue;
+            var m = href.match(/(https:\/\/www\.etsy\.com\/(?:[a-z]{2}\/)?shop\/([^/?#]+))/);
+            if (m) return normaliseShopUrl(m[1]);
         }
         return null;
     }
 
+    // Normalise to non-regional URL so cache keys are consistent
+    // e.g. https://www.etsy.com/uk/shop/Foo → https://www.etsy.com/shop/Foo
+    function normaliseShopUrl(url) {
+        return url.replace(/etsy\.com\/[a-z]{2}\/shop\//, 'etsy.com/shop/');
+    }
+
+    function closest(el, sel) {
+        while (el && el !== document) {
+            try { if (el.matches && el.matches(sel)) return el; } catch(e) {}
+            el = el.parentElement;
+        }
+        return null;
+    }
+
+    // ── Find card roots ───────────────────────────────────────────────────────
+    function findCards() {
+        var NOT = ':not([' + BAR_ATTR + '])';
+        var cards;
+
+        cards = document.querySelectorAll('.v2-listing-card' + NOT);
+        if (cards.length) { return Array.prototype.slice.call(cards); }
+
+        cards = document.querySelectorAll('[data-palette-listing-id]' + NOT);
+        if (cards.length) { return Array.prototype.slice.call(cards); }
+
+        cards = document.querySelectorAll('[data-listing-card-v2]' + NOT + ',[data-listing-card]' + NOT);
+        if (cards.length) { return Array.prototype.slice.call(cards); }
+
+        // Walk up from listing links
+        var links = document.querySelectorAll('a[href*="/listing/"]');
+        var seen  = {};
+        var result = [];
+        for (var i = 0; i < links.length; i++) {
+            var match = links[i].href.match(/\/listing\/(\d+)/);
+            if (!match || seen[match[1]]) continue;
+            seen[match[1]] = true;
+            var c = closest(links[i], '.v2-listing-card') ||
+                    closest(links[i], '[class*="listing-card"]') ||
+                    closest(links[i], 'li');
+            if (c && !c.hasAttribute(BAR_ATTR)) result.push(c);
+        }
+        return result;
+    }
+
+    // ── Metric extractors (from card DOM) ─────────────────────────────────────
     function extractPrice(card) {
-        const selectors = [
-            '.currency-value',
-            '[data-testid="price-primary"] .currency-value',
-            '.wt-text-title-03.wt-text-bold',
-            'p[class*="price"] .currency-value',
-            '[class*="price"] .currency-value',
-            'span[class*="currency-value"]',
-            'span[class*="currency"]',
-        ];
-        for (const sel of selectors) {
-            const el = card.querySelector(sel);
+        var sels = ['.currency-value', '[class*="price"] .currency-value', 'span[class*="currency-value"]'];
+        for (var i = 0; i < sels.length; i++) {
+            var el = card.querySelector(sels[i]);
             if (el && el.textContent.trim()) {
-                return parseFloat(el.textContent.replace(/[^0-9.]/g, '').trim());
+                var v = parseFloat(el.textContent.replace(/[^0-9.]/g, ''));
+                if (!isNaN(v)) return v;
             }
         }
-        // Fallback: try to find a price-like pattern in the card text
-        const text = card.textContent || '';
-        const priceMatch = text.match(/[£$€]\s*([\d,.]+)/);
-        if (priceMatch) return parseFloat(priceMatch[1].replace(/,/g, ''));
-        return null;
+        var m = (card.textContent || '').match(/[£$€]\s*([\d,.]+)/);
+        return m ? parseFloat(m[1].replace(/,/g, '')) : null;
     }
 
     function extractCurrency(card) {
-        const currEl = card.querySelector('.currency-symbol, [class*="currency-symbol"]');
-        if (currEl) return currEl.textContent.trim();
-        // Detect from card text
-        const text = card.textContent || '';
-        const m = text.match(/[£$€¥₹]/);
-        if (m) return m[0];
-        return '';
+        var sym = card.querySelector('.currency-symbol,[class*="currency-symbol"]');
+        if (sym) return sym.textContent.trim();
+        var m = (card.textContent || '').match(/[£$€¥₹]/);
+        return m ? m[0] : '';
     }
 
     function extractFavorites(card) {
-        const selectors = [
-            '[data-listing-card-favorite-count]',
-            '[class*="favorite-count"]',
-            'button[class*="favorite"] span',
-            'button[aria-label*="avourite"] span',
-            'button[aria-label*="avorite"] span',
-        ];
-        for (const sel of selectors) {
-            const el = card.querySelector(sel);
-            if (el) {
-                const num = parseNumber(el.textContent);
-                if (num !== null) return num;
-            }
+        var sels = ['[data-listing-card-favorite-count]','[class*="favorite-count"]',
+                    'button[aria-label*="avourite"] span','button[aria-label*="avorite"] span'];
+        for (var i = 0; i < sels.length; i++) {
+            var el = card.querySelector(sels[i]);
+            if (el) { var n = parseNum(el.textContent); if (n !== null) return n; }
         }
         return null;
     }
 
     function extractReviews(card) {
-        const selectors = [
-            '[data-testid="review-count"]',
-            '[class*="review-count"]',
-            '[aria-label*="star"] + span',
-            'span[class*="rating"]',
-        ];
-        for (const sel of selectors) {
-            const el = card.querySelector(sel);
-            if (el) {
-                const num = parseNumber(el.textContent);
-                if (num !== null) return num;
-            }
+        var rDiv = card.querySelector('div[role="img"][aria-label*="star"]');
+        if (rDiv) {
+            var label = rDiv.getAttribute('aria-label') || '';
+            var m = label.match(/(\d[\d,]*)\s+reviews?/i);
+            if (m) return parseNum(m[1]);
+            var p = rDiv.querySelector('p');
+            if (p) { var n = parseNum(p.textContent); if (n !== null) return n; }
+        }
+        var smalls = card.querySelectorAll('p.wt-text-body-smaller,span.wt-text-body-smaller');
+        for (var i = 0; i < smalls.length; i++) {
+            var t = smalls[i].textContent.trim();
+            if (/^\(\d+\)$/.test(t)) { var n2 = parseNum(t); if (n2 !== null) return n2; }
         }
         return null;
     }
 
     function extractRating(card) {
-        const el = card.querySelector('[aria-label*="star"], [aria-label*="Star"]');
-        if (el) {
-            const aria = el.getAttribute('aria-label') || '';
-            const m = aria.match(/([\d.]+)\s*star/i);
+        var span = card.querySelector('span.wt-text-title-small');
+        if (span) { var v = parseFloat(span.textContent.trim()); if (!isNaN(v) && v >= 1 && v <= 5) return v; }
+        var rDiv = card.querySelector('div[role="img"][aria-label*="star"]');
+        if (rDiv) {
+            var m = (rDiv.getAttribute('aria-label') || '').match(/([\d.]+)\s*star/i);
             if (m) return parseFloat(m[1]);
         }
         return null;
     }
 
     function extractBadges(card) {
-        const text = card.textContent.toLowerCase();
+        var t = (card.textContent || '').toLowerCase();
         return {
-            is_bestseller: text.includes('bestseller'),
-            is_popular_now: text.includes('popular now'),
-            free_shipping: text.includes('free shipping') || text.includes('free delivery'),
+            bestseller:    t.indexOf('bestseller') !== -1,
+            popular_now:   t.indexOf('popular now') !== -1,
+            free_shipping: t.indexOf('free shipping') !== -1 || t.indexOf('free delivery') !== -1,
         };
     }
 
-    // ─── Skeleton Bar Builder ────────────────────────────────────────────────
-
-    function createSkeletonBar(listingId) {
-        const bar = document.createElement('div');
+    // ── Build bar ─────────────────────────────────────────────────────────────
+    // deepMode = true means we add the extra shop-data chip placeholders
+    function makeBar(listingId, deepMode) {
+        var bar = document.createElement('div');
         bar.className = BAR_CLASS;
+        bar.setAttribute('data-listing-id-bar', listingId || '');
 
-        // Metric slots in order — all start as shimmer
-        const slots = [
-            { id: 'price', icon: '💰', label: 'Price' },
-            { id: 'favs', icon: '❤️', label: 'Favs' },
-            { id: 'reviews', icon: '💬', label: 'Reviews' },
-            { id: 'shipping', icon: '🚚', label: 'Ship' },
+        // ── Row 1: card-level data (always shown) ──
+        var cardSlots = [
+            { id: 'price',    icon: '💰' },
+            { id: 'favs',     icon: '❤️' },
+            { id: 'reviews',  icon: '💬' },
+            { id: 'shipping', icon: '🚚' },
         ];
-
-        for (const slot of slots) {
-            const chip = document.createElement('span');
-            chip.className = `ermb-chip ${SHIMMER_CLASS}`;
-            chip.dataset.slot = slot.id;
-            chip.innerHTML = `
-                <span class="ermb-label">${slot.icon}</span>
-                <span class="ermb-value">&nbsp;</span>
-            `;
+        for (var i = 0; i < cardSlots.length; i++) {
+            var chip = document.createElement('span');
+            chip.className = 'ermb-chip ' + SHIMMER_CLS;
+            chip.setAttribute('data-slot', cardSlots[i].id);
+            chip.innerHTML = '<span class="ermb-label">' + cardSlots[i].icon + '</span>'
+                           + '<span class="ermb-value">&nbsp;</span>';
             bar.appendChild(chip);
         }
 
-        // Badge placeholders
-        const badgeSlot1 = document.createElement('span');
-        badgeSlot1.className = `ermb-badge ${SHIMMER_CLASS}`;
-        badgeSlot1.dataset.slot = 'badge1';
-        badgeSlot1.textContent = '\u00A0';
-        bar.appendChild(badgeSlot1);
+        var badge = document.createElement('span');
+        badge.className = 'ermb-badge ' + SHIMMER_CLS;
+        badge.setAttribute('data-slot', 'badge1');
+        badge.textContent = '\u00A0';
+        bar.appendChild(badge);
 
-        // Listing ID (always show immediately)
-        if (listingId) {
-            const idSpan = document.createElement('span');
-            idSpan.className = 'ermb-id';
-            idSpan.textContent = `ID: ${listingId}`;
-            bar.appendChild(idSpan);
+        // ── Separator + deep-scrape placeholders ──
+        if (deepMode) {
+            var sep = document.createElement('span');
+            sep.className = 'ermb-sep';
+            bar.appendChild(sep);
+
+            var deepSlots = [
+                { id: 'shop-age',   icon: '🛒', label: 'Shop Age' },
+                { id: 'shop-sales', icon: '📊', label: 'Shop Sales' },
+                { id: 'est-sales',  icon: '🔥', label: 'Est. Sales' },
+                { id: 'confidence', icon: '⭐', label: 'Confidence' },
+            ];
+            for (var j = 0; j < deepSlots.length; j++) {
+                var dc = document.createElement('span');
+                dc.className = 'ermb-chip ermb-deep ' + SHIMMER_CLS;
+                dc.setAttribute('data-slot', deepSlots[j].id);
+                dc.innerHTML = '<span class="ermb-label">' + deepSlots[j].icon + '</span>'
+                             + '<span class="ermb-value">&nbsp;</span>';
+                bar.appendChild(dc);
+            }
         }
 
+        if (listingId) {
+            var idEl = document.createElement('span');
+            idEl.className = 'ermb-id';
+            idEl.textContent = 'ID: ' + listingId;
+            bar.appendChild(idEl);
+        }
         return bar;
     }
 
-    // ─── Progressive data fill ───────────────────────────────────────────────
-
-    function fillSlot(bar, slotId, icon, displayValue, extraClass) {
-        const chip = bar.querySelector(`[data-slot="${slotId}"]`);
+    // ── Fill a slot with a value ──────────────────────────────────────────────
+    function fillSlot(bar, slotId, icon, value, extraClass) {
+        var chip = bar.querySelector('[data-slot="' + slotId + '"]');
         if (!chip) return;
-
-        if (displayValue === null || displayValue === undefined) {
-            // No data available — hide this chip entirely
-            chip.style.display = 'none';
-            return;
-        }
-
-        chip.classList.remove(SHIMMER_CLASS);
-        chip.classList.add(LOADED_CLASS);
-        if (extraClass) chip.classList.add(extraClass);
-        chip.innerHTML = `
-            <span class="ermb-label">${icon}</span>
-            <span class="ermb-value">${displayValue}</span>
-        `;
+        if (value === null || value === undefined) { chip.style.display = 'none'; return; }
+        chip.classList.remove(SHIMMER_CLS);
+        chip.classList.add(LOADED_CLS);
+        chip.innerHTML = '<span class="ermb-label">' + icon + '</span>'
+                       + '<span class="ermb-value' + (extraClass ? ' ' + extraClass : '') + '">' + value + '</span>';
     }
 
-    function fillBadgeSlot(bar, slotId, badgeType, icon, label) {
-        const badge = bar.querySelector(`[data-slot="${slotId}"]`);
+    function fillBadge(bar, slotId, type, icon, label) {
+        var badge = bar.querySelector('[data-slot="' + slotId + '"]');
         if (!badge) return;
-
-        if (!label) {
-            badge.style.display = 'none';
-            return;
-        }
-
-        badge.classList.remove(SHIMMER_CLASS);
-        badge.classList.add(LOADED_CLASS, badgeType);
-        badge.textContent = '';
-        badge.innerHTML = `${icon} ${label}`;
+        if (!label) { badge.style.display = 'none'; return; }
+        badge.classList.remove(SHIMMER_CLS);
+        badge.classList.add(LOADED_CLS);
+        if (type) badge.classList.add(type);
+        badge.innerHTML = icon + ' ' + label;
     }
 
-    // ─── Progressive extraction + fill for a single card ─────────────────────
+    // ── Fill card-level data (from DOM, fast) ─────────────────────────────────
+    function fillCardData(card, bar) {
+        setTimeout(function () {
+            var price = extractPrice(card);
+            var cur   = extractCurrency(card);
+            fillSlot(bar, 'price', '💰', price != null ? cur + price.toFixed(2) : null);
+        }, 80);
 
-    async function progressiveExtract(card, bar) {
-        // Use small delays between extractions to stagger the shimmer → value transitions
-        // This creates a pleasing "popping in" visual effect
+        setTimeout(function () {
+            var favs = extractFavorites(card);
+            fillSlot(bar, 'favs', '❤️', favs != null ? fmtNum(favs) : null);
+        }, 160);
 
-        // 1. Price (fastest — usually in DOM immediately)
-        await microDelay(80);
-        const price = extractPrice(card);
-        const currency = extractCurrency(card);
-        if (price != null) {
-            fillSlot(bar, 'price', '💰', `${currency}${price.toFixed(2)}`);
-        } else {
-            fillSlot(bar, 'price', '💰', null);
-        }
-
-        // 2. Favorites
-        await microDelay(120);
-        const favs = extractFavorites(card);
-        if (favs != null) {
-            fillSlot(bar, 'favs', '❤️', formatNum(favs));
-        } else {
-            fillSlot(bar, 'favs', '❤️', null);
-        }
-
-        // 3. Reviews + rating
-        await microDelay(100);
-        const reviews = extractReviews(card);
-        const rating = extractRating(card);
-        if (reviews != null) {
-            const starStr = rating != null ? `${rating}⭐ ` : '';
-            fillSlot(bar, 'reviews', `${starStr}💬`, `${formatNum(reviews)} reviews`);
-        } else {
-            fillSlot(bar, 'reviews', '💬', null);
-        }
-
-        // 4. Badges + Shipping
-        await microDelay(80);
-        const badges = extractBadges(card);
-
-        if (badges.free_shipping) {
-            fillSlot(bar, 'shipping', '🚚', 'Free Ship');
-        } else {
-            fillSlot(bar, 'shipping', '🚚', null);
-        }
-
-        if (badges.is_bestseller) {
-            fillBadgeSlot(bar, 'badge1', 'bestseller', '🏅', 'Bestseller');
-        } else if (badges.is_popular_now) {
-            fillBadgeSlot(bar, 'badge1', 'popular', '🔥', 'Popular');
-        } else {
-            fillBadgeSlot(bar, 'badge1', '', '', null);
-        }
-    }
-
-    function microDelay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    // ─── Injection into card ─────────────────────────────────────────────────
-
-    function injectBarIntoCard(card) {
-        if (card.hasAttribute(BAR_ATTR)) return;
-        card.setAttribute(BAR_ATTR, '1');
-
-        const listingId = getListingId(card);
-
-        // 1. Create and inject skeleton bar IMMEDIATELY
-        const bar = createSkeletonBar(listingId);
-        insertBarIntoCard(card, bar);
-
-        // 2. Start progressive extraction in background
-        progressiveExtract(card, bar).catch(err => {
-            console.warn('[EtsyResearch] search-card-injector: Progressive extract error', err);
-        });
-    }
-
-    function insertBarIntoCard(card, bar) {
-        // Try insertion targets in order of specificity
-        const insertionTargets = [
-            '[class*="listing-card__info"]',
-            '.v2-listing-card__info',
-            '[data-testid="listing-card-title"]',
-            '[data-testid="listing-link"]',
-            '.v2-listing-card__img',
-            'a[class*="listing-link"]',
-            'a[href*="/listing/"]',   // broad fallback: after any listing link
-        ];
-
-        for (const sel of insertionTargets) {
-            const target = card.querySelector(sel);
-            if (target) {
-                target.insertAdjacentElement('afterend', bar);
-                return;
+        setTimeout(function () {
+            var reviews = extractReviews(card);
+            var rating  = extractRating(card);
+            if (reviews != null) {
+                var icon = rating != null ? (rating + '⭐ 💬') : '💬';
+                fillSlot(bar, 'reviews', icon, fmtNum(reviews) + ' reviews');
+            } else {
+                fillSlot(bar, 'reviews', '💬', null);
             }
+        }, 240);
+
+        setTimeout(function () {
+            var b = extractBadges(card);
+            fillSlot(bar, 'shipping', '🚚', b.free_shipping ? 'Free Ship' : null);
+            if (b.bestseller)       fillBadge(bar, 'badge1', 'bestseller', '🏅', 'Bestseller');
+            else if (b.popular_now) fillBadge(bar, 'badge1', 'popular',    '🔥', 'Popular');
+            else                    fillBadge(bar, 'badge1', '',            '',   null);
+        }, 320);
+    }
+
+    // ── Fill deep shop data (from service worker response) ────────────────────
+    function fillShopData(bar, data) {
+        // Shop age
+        fillSlot(bar, 'shop-age', '🛒', data.shop_age_display || null);
+
+        // Shop sales
+        fillSlot(bar, 'shop-sales', '📊',
+            data.total_shop_sales != null ? '~' + fmtNum(data.total_shop_sales) : null);
+
+        // Estimated listing sales
+        if (data.estimated_sales_low != null && data.estimated_sales_high != null) {
+            fillSlot(bar, 'est-sales', '🔥',
+                fmtNum(data.estimated_sales_low) + '–' + fmtNum(data.estimated_sales_high));
+        } else {
+            fillSlot(bar, 'est-sales', '🔥', null);
         }
 
-        // Fallback: append to the end of the card
+        // Confidence score with colour coding
+        if (data.confidence_score != null) {
+            var score = data.confidence_score;
+            var cls = score >= 70 ? 'ermb-conf-high' : (score >= 40 ? 'ermb-conf-med' : 'ermb-conf-low');
+            fillSlot(bar, 'confidence', '⭐', score + '%', cls);
+        } else {
+            fillSlot(bar, 'confidence', '⭐', null);
+        }
+    }
+
+    // ── Insert bar into <li> parent ───────────────────────────────────────────
+    function insertBar(card, bar) {
+        var li = closest(card, 'li');
+        if (li) { li.appendChild(bar); return; }
+        if (card.parentNode) { card.parentNode.insertBefore(bar, card.nextSibling); return; }
         card.appendChild(bar);
     }
 
-    // ─── Process all visible cards ───────────────────────────────────────────
-
-    function processAllCards() {
-        const cards = findAllCards();
-        const count = cards instanceof NodeList ? cards.length : cards.size;
-        if (count === 0) return 0;
-
-        cards.forEach(card => injectBarIntoCard(card));
-        console.log(`[EtsyResearch] search-card-injector: Processed ${count} cards`);
-        return count;
-    }
-
-    // ─── MutationObserver for dynamically loaded cards ────────────────────────
-
-    function startObserver() {
-        const observer = new MutationObserver((mutations) => {
-            let hasNew = false;
-            for (const m of mutations) {
-                if (m.addedNodes.length > 0) { hasNew = true; break; }
-            }
-            if (hasNew) {
-                clearTimeout(startObserver._timer);
-                startObserver._timer = setTimeout(processAllCards, 300);
+    // ── Listen for shop data back from service worker ─────────────────────────
+    try {
+        chrome.runtime.onMessage.addListener(function (msg) {
+            if (msg.type !== 'SERP_SHOP_DATA') return;
+            var listingId = msg.listing_id;
+            var bar = barsByListingId[listingId];
+            if (!bar) return;
+            if (msg.data) {
+                fillShopData(bar, msg.data);
+            } else {
+                // Scrape failed — hide the deep placeholders gracefully
+                var deepSlots = ['shop-age', 'shop-sales', 'est-sales', 'confidence'];
+                for (var i = 0; i < deepSlots.length; i++) {
+                    var chip = bar.querySelector('[data-slot="' + deepSlots[i] + '"]');
+                    if (chip) chip.style.display = 'none';
+                }
+                var sep = bar.querySelector('.ermb-sep');
+                if (sep) sep.style.display = 'none';
             }
         });
-
-        observer.observe(document.body || document.documentElement, {
-            childList: true,
-            subtree: true,
-        });
+    } catch(e) {
+        // chrome.runtime not available (e.g. extension context invalidated)
+        console.warn('[EtsyResearch] Could not attach message listener:', e);
     }
 
-    // ─── Diagnostic Banner ───────────────────────────────────────────────────
-    // Injects a small visible indicator so you can confirm the extension loaded
-
-    function showDiagnosticBanner(cardCount) {
-        const existing = document.getElementById('etsy-research-diagnostic');
-        if (existing) existing.remove();
-
-        const banner = document.createElement('div');
-        banner.id = 'etsy-research-diagnostic';
-        banner.setAttribute('data-etsy-research', 'active');
-        banner.style.cssText = [
-            'position:fixed', 'bottom:10px', 'right:10px', 'z-index:999999',
-            'background:#222', 'color:#0f0', 'padding:8px 14px',
-            'border-radius:8px', 'font-size:12px', 'font-family:monospace',
-            'box-shadow:0 2px 12px rgba(0,0,0,0.4)', 'cursor:pointer',
-            'opacity:0.9', 'max-width:320px',
-        ].join(';');
-        banner.innerHTML = `🔬 <b>EtsyResearch</b> loaded | Cards: ${cardCount}`;
-        banner.title = 'Click to dismiss';
-        banner.addEventListener('click', () => banner.remove());
-
-        // Auto-hide after 15 seconds
-        setTimeout(() => { if (banner.parentNode) banner.remove(); }, 15000);
-
-        document.body.appendChild(banner);
-    }
-
-    // ─── Retry mechanism ─────────────────────────────────────────────────────
-    // If no cards found initially, retry a few times as Etsy loads content
-
-    function initWithRetry(attempt) {
-        const MAX_ATTEMPTS = 15;
-        const RETRY_DELAY = 1000; // ms
-
-        const count = processAllCards();
-
-        // Check if we found any cards
-        const injected = document.querySelectorAll('[' + BAR_ATTR + '="1"]');
-        if (injected.length === 0 && attempt < MAX_ATTEMPTS) {
-            console.log(`[EtsyResearch] search-card-injector: No cards found yet, retry ${attempt + 1}/${MAX_ATTEMPTS}`);
-
-            // On later retries, dump some DOM diagnostic info
-            if (attempt === 3) {
-                console.log('[EtsyResearch] DOM diagnostic: listing links on page =',
-                    document.querySelectorAll('a[href*="/listing/"]').length);
-                console.log('[EtsyResearch] DOM diagnostic: document.body child count =',
-                    document.body ? document.body.children.length : 'no body');
-                console.log('[EtsyResearch] DOM diagnostic: URL =', window.location.href);
-            }
-
-            setTimeout(() => initWithRetry(attempt + 1), RETRY_DELAY);
-        } else {
-            console.log(`[EtsyResearch] search-card-injector: Found ${injected.length} cards after ${attempt + 1} attempt(s)`);
-            showDiagnosticBanner(injected.length);
+    // ── Request shop data from service worker ─────────────────────────────────
+    function requestShopData(listingId, shopUrl, listingData) {
+        try {
+            chrome.runtime.sendMessage({
+                type: 'SERP_LISTING_REQUEST',
+                listing_id: listingId,
+                shop_url:   shopUrl,
+                listing_data: listingData,
+            });
+        } catch(e) {
+            console.warn('[EtsyResearch] sendMessage failed:', e);
         }
     }
 
-    // ─── Init ─────────────────────────────────────────────────────────────────
+    // ── Process one card ──────────────────────────────────────────────────────
+    function processCard(card, cardIndex) {
+        if (card.hasAttribute(BAR_ATTR)) return;
+        card.setAttribute(BAR_ATTR, '1');
 
-    function init() {
-        console.log('[EtsyResearch] search-card-injector: STARTING on', window.location.href);
-        injectMiniBarStyles();
-        initWithRetry(0);
-        startObserver();
-        console.log('[EtsyResearch] search-card-injector: Initialized — monitoring for cards.');
+        var listingId = getListingId(card);
+        var deepMode  = cardIndex < MAX_DEEP_SCRAPE;
+        var shopUrl   = deepMode ? getShopUrl(card) : null;
+
+        // If we wanted deep but couldn't find shop URL, fall back to shallow
+        if (deepMode && !shopUrl) deepMode = false;
+
+        var bar = makeBar(listingId, deepMode);
+        insertBar(card, bar);
+
+        // Register bar so we can update it when shop data arrives
+        if (listingId) barsByListingId[listingId] = bar;
+
+        // Fill card-level data immediately from DOM
+        fillCardData(card, bar);
+
+        // Request deep shop data from service worker for first 8 cards
+        if (deepMode && listingId && shopUrl) {
+            // Collect what listing data we can from the card to help the estimator
+            var listingData = {
+                listing_id:          listingId,
+                shop_url:            shopUrl,
+                listing_price:       extractPrice(card),
+                listing_currency:    extractCurrency(card),
+                listing_favorites:   extractFavorites(card),
+                listing_reviews:     extractReviews(card),
+                is_bestseller:       extractBadges(card).bestseller,
+                is_popular_now:      extractBadges(card).popular_now,
+                listing_publish_date: null, // not visible on SERP cards
+            };
+            requestShopData(listingId, shopUrl, listingData);
+        }
     }
 
-    // Start as soon as possible
+    function processAll() {
+        var cards = findCards();
+        for (var i = 0; i < cards.length; i++) {
+            try { processCard(cards[i], i); } catch(e) { /* never crash the loop */ }
+        }
+        return cards.length;
+    }
+
+    // ── MutationObserver ──────────────────────────────────────────────────────
+    function startObserver() {
+        var timer;
+        var obs = new MutationObserver(function () {
+            clearTimeout(timer);
+            timer = setTimeout(processAll, 400);
+        });
+        obs.observe(document.body || document.documentElement, { childList: true, subtree: true });
+    }
+
+    // ── Green diagnostic banner ───────────────────────────────────────────────
+    function showBanner(count) {
+        var ex = document.getElementById('etsy-research-diagnostic');
+        if (ex) ex.remove();
+        var b = document.createElement('div');
+        b.id = 'etsy-research-diagnostic';
+        b.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:2147483647;' +
+            'background:#222;color:#0f0;padding:8px 14px;border-radius:8px;' +
+            'font-size:12px;font-family:monospace;cursor:pointer;' +
+            'box-shadow:0 2px 12px rgba(0,0,0,.5);';
+        b.innerHTML = '🔬 <b>EtsyResearch</b> | Cards: <b>' + count + '</b> | Deep: <b>' + Math.min(count, MAX_DEEP_SCRAPE) + '</b>';
+        b.onclick = function () { b.remove(); };
+        setTimeout(function () { if (b.parentNode) b.remove(); }, 20000);
+        document.body.appendChild(b);
+    }
+
+    // ── Retry loop ────────────────────────────────────────────────────────────
+    var retryCount = 0;
+    function retry() {
+        processAll();
+        var injected = document.querySelectorAll('[' + BAR_ATTR + ']').length;
+        if (injected === 0 && retryCount < 25) {
+            retryCount++;
+            setTimeout(retry, 1000);
+        } else {
+            showBanner(injected);
+            console.log('[EtsyResearch] Done — injected', injected, 'bars,', Math.min(injected, MAX_DEEP_SCRAPE), 'with deep scrape.');
+        }
+    }
+
+    // ── Boot ──────────────────────────────────────────────────────────────────
+    function boot() {
+        console.log('[EtsyResearch] search-card-injector loaded on', window.location.href);
+        injectStyles();
+        retry();
+        startObserver();
+    }
+
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+        document.addEventListener('DOMContentLoaded', boot);
     } else {
-        // Already past DOMContentLoaded — run immediately (with a tiny delay for safety)
-        setTimeout(init, 100);
+        setTimeout(boot, 50);
     }
 
 })();
